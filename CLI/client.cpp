@@ -1,3 +1,6 @@
+
+// This shit basically abandoned at this point, can't figure out how to do images with a fucking CLI. //
+
 #include <iostream>
 #include <winsock2.h>
 #include <ws2tcpip.h>
