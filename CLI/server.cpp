@@ -18,6 +18,8 @@
 #include <atomic>
 #include <fstream>
 #include <ctime>
+// God fucking help me if I need any more libraries //
+// I wonder how many of these actually end up getting used //
 
 using namespace std;
 
@@ -28,8 +30,11 @@ using namespace std;
 const int PORT = 3708;
 const int RECV_BUFFER_SIZE = 4096; // Standard buffer size for receiving chunks
 
-// Prefix to identify image data packets
 const string IMAGE_PREFIX = "IMAGE_DATA:";
+
+// Unused so far, remind me to do this later... //
+const string FILE_PREFIX = "FILE_DATA:";
+
 
 // Shared resources protected by a mutex
 vector<SOCKET> clients;
@@ -56,21 +61,21 @@ void broadcast_message(const string& message, SOCKET sender_socket) {
                 send(client_socket, message_with_hash.c_str(), static_cast<int>(message_with_hash.length()), 0);
             }
         }
-    } // Mutex is released here automatically
+    } 
+    // Mutex is released here automatically... at least, I hope it is... //
 }
 
-// Relays a raw data packet (like an image) to all clients except the sender
 void relay_raw_packet(const string& packet, SOCKET sender_socket) {
-    // Ensure the mutex is not locked before acquiring it
+    // Again, ensure the mutex is not locked before acquiring it
     {
         lock_guard<mutex> lock(clients_mutex);
-        string packet_with_newline = packet + "\n"; // Ensure newline delimiter is present
+        string packet_with_newline = packet + "\n"; // Ensure newline delimiter is present or else shit breaks. //
         for (SOCKET client_sock : clients) {
             if (client_sock != sender_socket) {
                 send(client_sock, packet_with_newline.c_str(), static_cast<int>(packet_with_newline.length()), 0);
             }
         }
-    } // Mutex is released here automatically
+    }
 }
 
 void handle_client(SOCKET client_socket, const string& client_ip) {
@@ -100,21 +105,18 @@ void handle_client(SOCKET client_socket, const string& client_ip) {
                 string message = accumulated_data.substr(0, pos);
                 accumulated_data.erase(0, pos + 1); // Erase the processed message and the '\n'
 
-                // --- Anti-spam check ---
                 auto now = chrono::steady_clock::now();
                 {
                     lock_guard<mutex> lock(clients_mutex);
                     auto last = last_message_time[client_socket];
                     auto elapsed = chrono::duration_cast<chrono::seconds>(now - last).count();
                     if (elapsed < MIN_SECONDS_BETWEEN_MESSAGES) {
-                        // Optionally send a warning to the client
-                        string warn = "Server: Please wait before sending another message.\n";
+                        string warn = "Server: Please wait before sending another message.\n"; // Warn the client against doing dumb shit //
                         send(client_socket, warn.c_str(), static_cast<int>(warn.length()), 0);
-                        continue; // Skip processing this message
+                        continue; // Don't even bother with the message //
                     }
                     last_message_time[client_socket] = now;
                 }
-                // --- End anti-spam check ---
 
                 if (message.rfind(IMAGE_PREFIX, 0) == 0) {
                     string sender_username;
@@ -123,7 +125,7 @@ void handle_client(SOCKET client_socket, const string& client_ip) {
                         sender_username = client_usernames[client_socket];
                     }
                     cout << "[" << sender_username << " from " << client_ip << "] Relaying image data." << endl;
-                    // Relay the raw image packet as-is to other clients
+                    // Relay the raw image packet as-is to other clients //
                     relay_raw_packet(message, client_socket);
                 } else {
                     size_t sep = message.rfind('|');
@@ -144,7 +146,7 @@ void handle_client(SOCKET client_socket, const string& client_ip) {
                                     client_usernames.erase(client_socket);
                                     last_message_time.erase(client_socket);
                                 }
-                                return; // Ensure lock is released before returning
+                                return;
                             }
                             string old_username;
                             {
@@ -163,7 +165,7 @@ void handle_client(SOCKET client_socket, const string& client_ip) {
                                 tm tm;
                                 if (localtime_s(&tm, &t) != 0) {
                                     cerr << "Failed to convert time to local time." << endl;
-                                    return; // Ensure lock is released before returning
+                                    return;
                                 }
                                 ostringstream oss;
                                 oss << put_time(&tm, "%Y-%m-%d %H:%M:%S");
@@ -177,7 +179,7 @@ void handle_client(SOCKET client_socket, const string& client_ip) {
                                 }
                                 string message_to_broadcast = sender_username + " says: " + msg_part;
 
-                                log_file << date << " " << message_to_broadcast << endl;
+                                log_file << date << " " << message_to_broadcast << endl; // Write to a log file so people can expose embarrassing shit that's said. //
                                 log_file.close();
 
                                 cout << "Broadcasting: " << message_to_broadcast << endl;
@@ -187,6 +189,7 @@ void handle_client(SOCKET client_socket, const string& client_ip) {
                             }
                         }
                     } else {
+                        // This shouldn't happen. Like at all. //
                         cerr << "Malformed message from " << client_ip << ": No hash separator '|'." << endl;
                     }
                 }
@@ -201,7 +204,7 @@ void handle_client(SOCKET client_socket, const string& client_ip) {
     {
         lock_guard<mutex> lock(clients_mutex);
         disconnected_username = client_usernames[client_socket];
-        // Remove client from lists
+        // Remove client from lists //
         clients.erase(remove(clients.begin(), clients.end(), client_socket), clients.end());
         client_usernames.erase(client_socket);
         last_message_time.erase(client_socket);
@@ -221,7 +224,7 @@ void handle_client(SOCKET client_socket, const string& client_ip) {
     closesocket(client_socket);
 }
 
-// Function to calculate SHA256 hash using OpenSSL EVP API
+// Function to calculate SHA256 hash using OpenSSL EVP API //
 string CALC_SHA256(const string& input) {
     unsigned char hash[SHA256_DIGEST_LENGTH];
     unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
@@ -243,7 +246,8 @@ string CALC_SHA256(const string& input) {
     return ss.str();
 }
 
-// Console command thread function
+// Console command thread, so server hosts can enter console commands locally. //
+// It's also here because I cannot be fucked figuring out how to do client permissions properly. //
 void console_command_thread() {
     string line;
     while (server_running) {
@@ -253,7 +257,7 @@ void console_command_thread() {
             {
                 lock_guard<mutex> lock(clients_mutex);
                 banned_usernames.insert(username);
-                // Disconnect all clients with this username
+                // Disconnect all clients with this username. Hope to god nobody needs to ban "Anonymous" because everyone will be banned. TwT //
                 for (auto it = client_usernames.begin(); it != client_usernames.end(); ++it) {
                     if (it->second == username) {
                         SOCKET sock = it->first;
@@ -278,12 +282,14 @@ void console_command_thread() {
 int main() {
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        // Pretty sure this shouldn't happen, but it might. //
         cerr << "Failed to initialize Winsock: " << WSAGetLastError() << endl;
         return 1;
     }
 
     SOCKET server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd == INVALID_SOCKET) {
+        // Couldn't bind to the port that we wanted. Suck shit. //
         cerr << "Could not create socket: " << WSAGetLastError() << endl;
         WSACleanup();
         return 1;
@@ -295,6 +301,7 @@ int main() {
     address.sin_port = htons(PORT);
 
     if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) == SOCKET_ERROR) {
+        // Couldn't bind to the IP that we wanted. Sucked in. //
         cerr << "Bind failed: " << WSAGetLastError() << endl;
         closesocket(server_fd);
         WSACleanup();
@@ -317,6 +324,7 @@ int main() {
         int client_addr_len = sizeof(client_addr);
         SOCKET new_socket = accept(server_fd, (struct sockaddr*)&client_addr, &client_addr_len);
         if (new_socket == INVALID_SOCKET) {
+            // I genuinely do not know how this could happen but if something breaks, it's here. //
             cerr << "Accept failed: " << WSAGetLastError() << endl;
             continue;
         }

@@ -414,7 +414,7 @@ namespace ChatClientGUICS
 
         private void XZChat_FormClosing(object? sender, FormClosingEventArgs e)
         {
-            Disconnect();
+            Disconnect(); // Disconnect when we close the app //
         }
     }
 }
