@@ -16,13 +16,14 @@ namespace ChatClientGUICS
     {
         private TcpClient? clientConnection;
         private NetworkStream? clientStream;
-        private const int DEFAULT_SERVER_PORT = 3708; // Listen on port 3708 //
+        private const int DEFAULT_SERVER_PORT = 3708;
+        private const int DEFAULT_FILE_PORT = 4045;
         private string? username;
         private bool isReceiving = false;
         private readonly StringBuilder receiveBuffer = new StringBuilder();
 
         private const string IMAGE_PREFIX = "IMAGE_DATA:";
-        private const int MAX_IMAGE_MESSAGE_LENGTH = 750 * 1024; // 750 KB limit for Base64 message //
+        private const int MAX_IMAGE_MESSAGE_LENGTH = 750 * 1024;
 
         public XZChat()
         {
