@@ -4,8 +4,7 @@
 
 /.vs
 /GUI/obj
+/GUI/.vs
 /GUI/bin/Debug/net8.0-windows
-/CLI/server.cpp
-/GUI/.vs/ChatClientGUICS
 /GUI/bin/Debug/net9.0-windows7.0
-/GUI/.vs/ProjectEvaluation
+/GUI/bin/Release/net9.0-windows7.0

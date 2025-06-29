@@ -10,6 +10,7 @@ using System.Security.Cryptography; // Needed for SHA256
 using System.IO; // Needed for IOException, File operations
 using System.Drawing; // Needed for Image objects
 
+
 namespace ChatClientGUICS
 {
     public partial class XZChat : Form
@@ -17,13 +18,17 @@ namespace ChatClientGUICS
         private TcpClient? clientConnection;
         private NetworkStream? clientStream;
         private const int DEFAULT_SERVER_PORT = 3708;
-        private const int DEFAULT_FILE_PORT = 4045;
         private string? username;
         private bool isReceiving = false;
         private readonly StringBuilder receiveBuffer = new StringBuilder();
 
+        private const string MAX_FILE_SIZE_PREFIX = "MAX_FILE:";
+
         private const string IMAGE_PREFIX = "IMAGE_DATA:";
         private const int MAX_IMAGE_MESSAGE_LENGTH = 750 * 1024;
+
+        private const string FILE_PREFIX = "FILE_DATA:";
+        private const int MAX_FILE_MESSAGE_LENGTH = 2000 * 1024; // TODO: Replace with what the server says is the max size
 
         public XZChat()
         {
@@ -96,6 +101,7 @@ namespace ChatClientGUICS
             }
         }
 
+
         private async void Button2_Click(object? sender, EventArgs e)
         {
             string messageToSend = chatBox.Text.Trim();
@@ -117,6 +123,47 @@ namespace ChatClientGUICS
             catch (Exception ex)
             {
                 AppendChatText($"Send Error: {ex.Message}");
+            }
+        }
+        private async void sendFileItem_Click(object? sender, EventArgs e)
+        {
+            if (clientStream == null || !clientStream.CanWrite)
+            {
+                MessageBox.Show("Not connected to server.", "Error.", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            using (OpenFileDialog openFileDialog = new OpenFileDialog())
+            {
+                openFileDialog.Filter = "All Files (*.*)|*.*";
+                openFileDialog.Title = "Select file to send.";
+
+                if (openFileDialog.ShowDialog() == DialogResult.OK)
+                {
+                    try
+                    {
+                        byte[] fileBytes = File.ReadAllBytes(openFileDialog.FileName);
+
+                        string base64File = Convert.ToBase64String(fileBytes);
+                        string base64FileHash = CalculateSha256Hash(base64File);
+
+                        string fileName = Path.GetFileName(openFileDialog.FileName);
+                        string fileMessage = $"{FILE_PREFIX}{username}|{fileName}|{base64File}|{base64FileHash}\n";
+                        if (fileMessage.Length > MAX_FILE_MESSAGE_LENGTH)
+                        {
+                            MessageBox.Show("File is too large to send.", "File Too Large", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            return;
+                        }
+
+                        byte[] dataToSend = Encoding.UTF8.GetBytes(fileMessage);
+                        await clientStream.WriteAsync(dataToSend, 0, dataToSend.Length);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Failed to send file: {openFileDialog.FileName}. \n {ex}", "Error.", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
+                }
             }
         }
 
@@ -302,6 +349,67 @@ namespace ChatClientGUICS
                     }
                 }
             }
+
+            // Handle file data
+            else if (receivedData.StartsWith(FILE_PREFIX))
+            {
+                string fileDataWithHash = receivedData.Substring(FILE_PREFIX.Length);
+                // Now: username|filename|base64|hash
+                int firstPipe = fileDataWithHash.IndexOf('|');
+                int secondPipe = fileDataWithHash.IndexOf('|', firstPipe + 1);
+                int lastPipe = fileDataWithHash.LastIndexOf('|');
+
+                if (firstPipe != -1 && secondPipe != -1 && lastPipe != -1 && firstPipe < secondPipe && secondPipe < lastPipe)
+                {
+                    string senderUsername = fileDataWithHash.Substring(0, firstPipe);
+                    string originalFileName = fileDataWithHash.Substring(firstPipe + 1, secondPipe - firstPipe - 1);
+                    string base64File = fileDataWithHash.Substring(secondPipe + 1, lastPipe - secondPipe - 1);
+
+                    string receivedFileHash = fileDataWithHash.Substring(lastPipe + 1);
+                    string calculatedFileHash = CalculateSha256Hash(base64File);
+
+                    DialogResult result = MessageBox.Show(
+                        $"{senderUsername} sent a file: {originalFileName}.\nYou should only accept files that you trust.\nAccept?",
+                        "Incoming file.",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Question
+                    );
+
+                    if (calculatedFileHash.Equals(receivedFileHash, StringComparison.OrdinalIgnoreCase) && result == DialogResult.Yes)
+                    {
+                        try
+                        {
+                            byte[] fileBytes = Convert.FromBase64String(base64File);
+                            using (SaveFileDialog saveFileDialog = new SaveFileDialog())
+                            {
+                                saveFileDialog.Title = $"Save file from {senderUsername}";
+                                saveFileDialog.Filter = "All Files (*.*)|*.*";
+                                saveFileDialog.FileName = originalFileName;
+                                if (saveFileDialog.ShowDialog() == DialogResult.OK)
+                                {
+                                    File.WriteAllBytes(saveFileDialog.FileName, fileBytes);
+                                    AppendChatText($"{senderUsername} sent a file: {Path.GetFileName(saveFileDialog.FileName)}");
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            AppendChatText($"[Error saving file: {ex.Message}]");
+                        }
+                    }
+
+                    else if (result == DialogResult.No)
+                    {
+                        AppendChatText($"{senderUsername} sent a file: {originalFileName}. [NOT SAVED]");
+                    }
+
+                    else
+                    {
+                        AppendChatText($"[CORRUPTED FILE RECEIVED from {senderUsername}]");
+                    }
+                }
+            }
+
             // Handle Text Data
             else
             {
@@ -416,6 +524,16 @@ namespace ChatClientGUICS
         private void XZChat_FormClosing(object? sender, FormClosingEventArgs e)
         {
             Disconnect(); // Disconnect when we close the app //
+        }
+
+        private void exitMenuItem_Click(object? sender, EventArgs e)
+        {
+            this.Close();
+        }
+
+        private void aboutMenuItem_Click(object? sender, EventArgs e)
+        {
+            MessageBox.Show("XZChat v0.0.1 RC2 \nMade with love from GalaxyDoge72! <3\nCheck out the source code: https://github.com/GalaxyDoge72/XZChat", "About");
         }
     }
 }
