@@ -22,13 +22,15 @@ namespace ChatClientGUICS
         private bool isReceiving = false;
         private readonly StringBuilder receiveBuffer = new StringBuilder();
 
-        private const string MAX_FILE_SIZE_PREFIX = "MAX_FILE:";
+        private const string MAX_FILE_SIZE_PREFIX = "MAX_FILE_SIZE:";
 
         private const string IMAGE_PREFIX = "IMAGE_DATA:";
         private const int MAX_IMAGE_MESSAGE_LENGTH = 750 * 1024;
 
         private const string FILE_PREFIX = "FILE_DATA:";
-        private const int MAX_FILE_MESSAGE_LENGTH = 2000 * 1024; // TODO: Replace with what the server says is the max size
+
+        private const string MAX_FILE_MESSAGE_STR = "MAX_FILE_SIZE:";
+        private int MAX_FILE_MESSAGE_LENGTH = 0;
 
         public XZChat()
         {
@@ -148,6 +150,13 @@ namespace ChatClientGUICS
                         string base64FileHash = CalculateSha256Hash(base64File);
 
                         string fileName = Path.GetFileName(openFileDialog.FileName);
+                        int maxBase64Length = CalculateMaxBase64FileLength(MAX_FILE_MESSAGE_LENGTH, username ?? "", fileName);
+                        if (base64File.Length > maxBase64Length)
+                        {
+                            MessageBox.Show("File is too large to send.", "File Too Large", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            return;
+                        }
+
                         string fileMessage = $"{FILE_PREFIX}{username}|{fileName}|{base64File}|{base64FileHash}\n";
                         if (fileMessage.Length > MAX_FILE_MESSAGE_LENGTH)
                         {
@@ -349,6 +358,40 @@ namespace ChatClientGUICS
                     }
                 }
             }
+            else if (receivedData.StartsWith(MAX_FILE_SIZE_PREFIX))
+            {
+                string payload = receivedData.Substring(MAX_FILE_SIZE_PREFIX.Length);
+                int pipeIndex = payload.IndexOf('|');
+                if (pipeIndex > 0 && pipeIndex < payload.Length - 1)
+                {
+                    string numberPart = payload.Substring(0, pipeIndex);
+                    string hashPart = payload.Substring(pipeIndex + 1);
+
+                    string calculatedHash = CalculateSha256Hash(MAX_FILE_SIZE_PREFIX + numberPart);
+
+                    if (calculatedHash.Equals(hashPart, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (int.TryParse(numberPart, out int maxFileSize))
+                        {
+                            MAX_FILE_MESSAGE_LENGTH = maxFileSize;
+                            AppendChatText($"Maximum file size is now: {MAX_FILE_MESSAGE_LENGTH} bytes.");
+                        }
+                        else
+                        {
+AppendCha                                                tText("Server sent invalid max file size value.");
+                        }
+                    }
+else
+                    {
+                        AppendChatText("Server sent invalid max file size hash. Ignoring update.");
+                    }
+                }
+                else
+                {
+                    AppendChatText("Malformed max file size message from server.");
+                }
+            }
+
 
             // Handle file data
             else if (receivedData.StartsWith(FILE_PREFIX))
@@ -534,6 +577,20 @@ namespace ChatClientGUICS
         private void aboutMenuItem_Click(object? sender, EventArgs e)
         {
             MessageBox.Show("XZChat v0.0.1 RC2 \nMade with love from GalaxyDoge72! <3\nCheck out the source code: https://github.com/GalaxyDoge72/XZChat", "About");
+        }
+
+        // Add this helper method to calculate the maximum allowed base64 file length
+        private int CalculateMaxBase64FileLength(int maxFileMessageLength, string username, string fileName)
+        {
+            // FILE_PREFIX + username + '|' + fileName + '|' + base64File + '|' + hash + '\n'
+            int hashLength = 64; // SHA256 hex
+            int overhead =
+                FILE_PREFIX.Length +
+                username.Length + 1 +
+                fileName.Length + 1 +
+                1 + // for the '|' before hash
+                hashLength + 1; // for '\n'
+            return maxFileMessageLength - overhead;
         }
     }
 }
