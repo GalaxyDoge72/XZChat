@@ -29,7 +29,7 @@ namespace ChatClientGUICS
 
         private const string FILE_PREFIX = "FILE_DATA:";
 
-        private const string MAX_FILE_MESSAGE_STR = "MAX_FILE_SIZE:";
+        private const string NEW_MAX_FILE_MESSAGE_STR = "NEW_MAX_FILE_SIZE:";
         private int MAX_FILE_MESSAGE_LENGTH = 0;
 
         public XZChat()
@@ -140,38 +140,66 @@ namespace ChatClientGUICS
                 openFileDialog.Filter = "All Files (*.*)|*.*";
                 openFileDialog.Title = "Select file to send.";
 
+                // Declare filePath here so it's accessible within the try block
+                string filePath = string.Empty;
+
                 if (openFileDialog.ShowDialog() == DialogResult.OK)
                 {
-                    try
+                    filePath = openFileDialog.FileName; // Assign the value here
+                }
+                else
+                {
+                    // If the dialog was cancelled, just return
+                    return;
+                }
+
+                try
+                {
+                    FileInfo fileInfo = new FileInfo(filePath);
+
+                    string fileName = Path.GetFileName(filePath);
+                    int maxAllowedBase64Length = CalculateMaxBase64FileLength(MAX_FILE_MESSAGE_LENGTH, username ?? "", fileName);
+
+                    long estimatedMaxRawBytes = (long)(maxAllowedBase64Length * 0.75);
+
+                    if (fileInfo.Length > estimatedMaxRawBytes)
                     {
-                        byte[] fileBytes = File.ReadAllBytes(openFileDialog.FileName);
-
-                        string base64File = Convert.ToBase64String(fileBytes);
-                        string base64FileHash = CalculateSha256Hash(base64File);
-
-                        string fileName = Path.GetFileName(openFileDialog.FileName);
-                        int maxBase64Length = CalculateMaxBase64FileLength(MAX_FILE_MESSAGE_LENGTH, username ?? "", fileName);
-                        if (base64File.Length > maxBase64Length)
-                        {
-                            MessageBox.Show("File is too large to send.", "File Too Large", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                            return;
-                        }
-
-                        string fileMessage = $"{FILE_PREFIX}{username}|{fileName}|{base64File}|{base64FileHash}\n";
-                        if (fileMessage.Length > MAX_FILE_MESSAGE_LENGTH)
-                        {
-                            MessageBox.Show("File is too large to send.", "File Too Large", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                            return;
-                        }
-
-                        byte[] dataToSend = Encoding.UTF8.GetBytes(fileMessage);
-                        await clientStream.WriteAsync(dataToSend, 0, dataToSend.Length);
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show($"Failed to send file: {openFileDialog.FileName}. \n {ex}", "Error.", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        MessageBox.Show($"File is too large to send. Maximum allowed raw file size is approximately {estimatedMaxRawBytes / 1024} KB.", "File Too Large", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                         return;
                     }
+
+                    byte[] fileBytes = File.ReadAllBytes(filePath);
+
+                    string base64File = Convert.ToBase64String(fileBytes);
+
+                    if (base64File.Length > maxAllowedBase64Length)
+                    {
+                        MessageBox.Show("File is too large to send after encoding (Base64 exceeds limit).", "File Too Large", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+
+                    string base64FileHash = CalculateSha256Hash(base64File);
+
+                    string fileMessage = $"{FILE_PREFIX}{username}|{fileName}|{base64File}|{base64FileHash}\n";
+
+                    if (fileMessage.Length > MAX_FILE_MESSAGE_LENGTH)
+                    {
+                        MessageBox.Show("File message string is too large to send (exceeds total message limit). This should not happen if previous checks are correct.", "Internal Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+
+                    byte[] dataToSend = Encoding.UTF8.GetBytes(fileMessage);
+                    await clientStream.WriteAsync(dataToSend, 0, dataToSend.Length);
+
+                    AppendChatText($"You sent file: {fileName}");
+                }
+                catch (OutOfMemoryException)
+                {
+                    MessageBox.Show("Not enough memory to process this file. It's likely still too large.", "Out of Memory", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Failed to send file: {filePath}. \n {ex.Message}", "Error.", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
         }
@@ -235,6 +263,11 @@ namespace ChatClientGUICS
             if (!IPAddress.TryParse(ipAddressString, out IPAddress? serverIP)) // Check if we've got a valid IP and if we don't, flip shit //
             {
                 MessageBox.Show("Please enter a valid IP address.", "Invalid IP", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            if (username.Length > 7)
+            {
+                MessageBox.Show("Username cannot be more than 7 characters", "Invalid Username", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
@@ -358,7 +391,7 @@ namespace ChatClientGUICS
                     }
                 }
             }
-            else if (receivedData.StartsWith(MAX_FILE_SIZE_PREFIX))
+            else if (receivedData.StartsWith(MAX_FILE_SIZE_PREFIX)) // This handles the initial MAX_FILE_SIZE message
             {
                 string payload = receivedData.Substring(MAX_FILE_SIZE_PREFIX.Length);
                 int pipeIndex = payload.IndexOf('|');
@@ -373,15 +406,15 @@ namespace ChatClientGUICS
                     {
                         if (int.TryParse(numberPart, out int maxFileSize))
                         {
-                            MAX_FILE_MESSAGE_LENGTH = maxFileSize;
+                            MAX_FILE_MESSAGE_LENGTH = maxFileSize; // Update the client's stored max file size
                             AppendChatText($"Maximum file size is now: {MAX_FILE_MESSAGE_LENGTH} bytes.");
                         }
                         else
                         {
-AppendCha                                                tText("Server sent invalid max file size value.");
+                            AppendChatText("Server sent invalid max file size value.");
                         }
                     }
-else
+                    else
                     {
                         AppendChatText("Server sent invalid max file size hash. Ignoring update.");
                     }
@@ -389,6 +422,42 @@ else
                 else
                 {
                     AppendChatText("Malformed max file size message from server.");
+                }
+            }
+            // Add this new block to handle the NEW_MAX_FILE_SIZE messages
+            else if (receivedData.StartsWith(NEW_MAX_FILE_MESSAGE_STR)) // This will handle updates from the server command
+            {
+                string payload = receivedData.Substring(NEW_MAX_FILE_MESSAGE_STR.Length);
+                int pipeIndex = payload.IndexOf('|');
+                if (pipeIndex > 0 && pipeIndex < payload.Length - 1)
+                {
+                    string numberPart = payload.Substring(0, pipeIndex);
+                    string hashPart = payload.Substring(pipeIndex + 1);
+
+                    // IMPORTANT: The server calculates the hash of "NEW_MAX_FILE_SIZE:SIZE"
+                    // So, you need to calculate the hash for verification using the same prefix.
+                    string calculatedHash = CalculateSha256Hash(NEW_MAX_FILE_MESSAGE_STR + numberPart);
+
+                    if (calculatedHash.Equals(hashPart, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (int.TryParse(numberPart, out int newMaxFileSize))
+                        {
+                            MAX_FILE_MESSAGE_LENGTH = newMaxFileSize; // Update the client's stored max file size
+                            AppendChatText($"Server: Maximum file size updated to {MAX_FILE_MESSAGE_LENGTH} bytes.");
+                        }
+                        else
+                        {
+                            AppendChatText("Server sent an invalid new max file size value.");
+                        }
+                    }
+                    else
+                    {
+                        AppendChatText("Server sent invalid new max file size hash. Ignoring update.");
+                    }
+                }
+                else
+                {
+                    AppendChatText("Malformed new max file size message from server.");
                 }
             }
 
